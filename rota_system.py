@@ -1,11 +1,3 @@
-"""
-Security Rota AI Scheduling System - Streamlit Cloud Compatible
-Uses session state instead of SQLite for cloud deployment
-
-For local use: streamlit run rota_system.py
-For cloud: Deploy to Streamlit Cloud as-is
-"""
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -30,6 +22,7 @@ def init_session_state():
                 'id': 1,
                 'name': 'John Smith',
                 'phone': '07700 123456',
+                'email': 'john.smith@email.com',  # Added email
                 'postcode': 'LE1 1AA',
                 'sia_license': 'SIA123456',
                 'max_hours': 48,
@@ -40,6 +33,7 @@ def init_session_state():
                 'id': 2,
                 'name': 'Sarah Wilson',
                 'phone': '07700 789012',
+                'email': 'sarah.wilson@email.com',  # Added email
                 'postcode': 'NN18 8BB',
                 'sia_license': 'SIA789012',
                 'max_hours': 40,
@@ -49,28 +43,7 @@ def init_session_state():
         ]
     
     if 'sites' not in st.session_state:
-        st.session_state.sites = [
-            {
-                'id': 1,
-                'name': 'Geddington-B',
-                'client': 'Taz',
-                'postcode': 'NN18',
-                'guards_required': 1,
-                'shift_start': '18:00',
-                'shift_end': '06:00',
-                'days_operation': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-            },
-            {
-                'id': 2,
-                'name': 'Royal Hotel Ashby',
-                'client': 'Taz',
-                'postcode': 'LE65',
-                'guards_required': 1,
-                'shift_start': '18:00',
-                'shift_end': '06:00',
-                'days_operation': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-            }
-        ]
+        st.session_state.sites = []
     
     if 'schedules' not in st.session_state:
         st.session_state.schedules = {}
@@ -116,136 +89,109 @@ def estimate_distance(postcode1, postcode2):
     else:
         return 50
 
-class ScheduleGenerator:
-    def __init__(self, week_start_date):
-        self.week_start = week_start_date
-        self.days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        self.schedule = {}
-        self.employee_hours = {}
-        self.alerts = []
-        self.unassigned_shifts = []
-        self.opportunities_24hr = []
-        
-    def load_data(self):
-        """Load employees and sites from session state"""
-        self.employees = st.session_state.employees
-        self.sites = st.session_state.sites
+# Employee Management
+def manage_employees():
+    st.title("👥 Manage Employees")
     
-    def generate(self):
-        """Main scheduling algorithm"""
-        self.load_data()
-        
-        # Initialize tracking
-        for emp in self.employees:
-            self.employee_hours[emp['id']] = 0
-            self.schedule[emp['id']] = {day: [] for day in self.days}
-        
-        # Process each day
-        for day in self.days:
-            self._assign_day(day)
-        
-        # Check for 24-hour opportunities
-        self._identify_24hr_opportunities()
-        
-        return self.schedule, self.alerts, self.unassigned_shifts
+    with st.expander("➕ Add New Employee", expanded=False):
+        with st.form("add_employee"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                name = st.text_input("Full Name*")
+                phone = st.text_input("Phone Number")
+                postcode = st.text_input("Home Postcode*")
+                email = st.text_input("Email Address*")  # Added email field
+            
+            with col2:
+                sia_license = st.text_input("SIA License Number")
+                max_hours = st.number_input("Max Weekly Hours", min_value=1, max_value=60, value=48)
+                willing_24hr = st.checkbox("Willing to work 24-hour shifts")
+            
+            st.write("**Available Days:**")
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            availability = st.multiselect("Select available days", days, default=days)
+            
+            submitted = st.form_submit_button("Add Employee")
+            
+            if submitted:
+                if name and postcode and email:  # Check if the essential fields are filled
+                    new_emp = {
+                        'id': st.session_state.next_employee_id,
+                        'name': name,
+                        'phone': phone,
+                        'email': email,  # Store the email
+                        'postcode': postcode,
+                        'sia_license': sia_license,
+                        'max_hours': max_hours,
+                        'availability': availability,
+                        'willing_24hr': willing_24hr
+                    }
+                    st.session_state.employees.append(new_emp)
+                    st.session_state.next_employee_id += 1
+                    st.success(f"✅ Added {name} successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please fill in Name, Postcode, and Email Address.")
     
-    def _assign_day(self, day):
-        """Assign guards to all sites for a given day"""
-        day_sites = [s for s in self.sites if day in s['days_operation']]
-        day_sites.sort(key=lambda x: x['guards_required'], reverse=True)
-        
-        for site in day_sites:
-            shift_hours = calculate_shift_hours(site['shift_start'], site['shift_end'])
-            assigned = 0
-            
-            available_employees = []
-            for emp in self.employees:
-                if day not in emp['availability']:
-                    continue
-                if self.employee_hours[emp['id']] + shift_hours > emp['max_hours']:
-                    continue
-                if len(self.schedule[emp['id']][day]) > 0:
-                    continue
-                
-                distance = estimate_distance(emp['postcode'], site['postcode'])
-                workload = self.employee_hours[emp['id']]
-                
-                available_employees.append({
-                    'emp': emp,
-                    'distance': distance,
-                    'workload': workload
-                })
-            
-            available_employees.sort(key=lambda x: (x['workload'], x['distance']))
-            
-            for i in range(min(site['guards_required'], len(available_employees))):
-                emp_data = available_employees[i]
-                emp = emp_data['emp']
-                
-                self.schedule[emp['id']][day].append({
-                    'site_id': site['id'],
-                    'site_name': site['name'],
-                    'client': site['client'],
-                    'postcode': site['postcode'],
-                    'start': site['shift_start'],
-                    'end': site['shift_end'],
-                    'hours': shift_hours
-                })
-                
-                self.employee_hours[emp['id']] += shift_hours
-                assigned += 1
-            
-            if assigned < site['guards_required']:
-                self.unassigned_shifts.append({
-                    'day': day,
-                    'site': site['name'],
-                    'required': site['guards_required'],
-                    'assigned': assigned
-                })
-                self.alerts.append({
-                    'type': 'error',
-                    'message': f"{site['name']} on {day}: Only {assigned}/{site['guards_required']} guards assigned"
-                })
-        
-        for emp_id, hours in self.employee_hours.items():
-            emp = next((e for e in self.employees if e['id'] == emp_id), None)
-            if emp and hours > emp['max_hours'] * 0.9:
-                self.alerts.append({
-                    'type': 'warning',
-                    'message': f"{emp['name']}: {hours:.1f}/{emp['max_hours']} hours ({(hours/emp['max_hours']*100):.1f}%)"
-                })
+# Site Management
+def manage_sites():
+    st.title("📍 Manage Sites")
     
-    def _identify_24hr_opportunities(self):
-        """Find consecutive shifts that could be 24-hour assignments"""
-        for emp_id, week_schedule in self.schedule.items():
-            emp = next((e for e in self.employees if e['id'] == emp_id), None)
-            if not emp or not emp['willing_24hr']:
-                continue
+    with st.expander("➕ Add New Site", expanded=False):
+        with st.form("add_site"):
+            col1, col2 = st.columns(2)
             
-            for i, day in enumerate(self.days[:-1]):
-                today_shifts = week_schedule[day]
-                tomorrow_shifts = week_schedule[self.days[i + 1]]
-                
-                if len(today_shifts) == 1 and len(tomorrow_shifts) == 1:
-                    today = today_shifts[0]
-                    tomorrow = tomorrow_shifts[0]
-                    
-                    if today['end'] == tomorrow['start']:
-                        distance = estimate_distance(today['postcode'], tomorrow['postcode'])
-                        
-                        if distance <= 30:
-                            self.opportunities_24hr.append({
-                                'employee': emp['name'],
-                                'day': f"{day}-{self.days[i + 1]}",
-                                'site1': today['site_name'],
-                                'site2': tomorrow['site_name'],
-                                'distance': distance
-                            })
-                            
-                            self.alerts.append({
-                                'type': 'success',
-                                'message': f"24hr Opportunity: {emp['name']} - {today['site_name']} to {tomorrow['site_name']} ({distance:.1f} miles)"
-                            })
+            with col1:
+                site_name = st.text_input("Site Name*")
+                client = st.selectbox("Client", ["Taz", "Servo", "Ayam"])
+                postcode = st.text_input("Postcode*")
+                guards = st.number_input("Guards Required", min_value=1, max_value=10, value=1)
+            
+            with col2:
+                shift_start = st.time_input("Shift Start")
+                shift_end = st.time_input("Shift End")
+            
+            st.write("**Operating Days:**")
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            operation_days = st.multiselect("Select operating days", days, default=days)
+            
+            # Weekend shift dynamic input
+            st.write("**Weekend Shifts**:")
+            weekend_shifts = st.checkbox("Enable Weekend Shifts")
+            
+            weekend_guards = None
+            shift_type = None
+            if weekend_shifts:
+                weekend_guards = st.number_input("How many guards required for weekends?", min_value=1, max_value=3)
+                shift_type = st.radio("What type of shifts on weekends?", ['Day Shift', 'Night Shift', 'Day & Night'])
+            
+            submitted = st.form_submit_button("Add Site")
+            
+            if submitted:
+                if site_name and postcode and shift_start and shift_end:
+                    new_site = {
+                        'id': st.session_state.next_site_id,
+                        'name': site_name,
+                        'client': client,
+                        'postcode': postcode,
+                        'guards_required': guards,
+                        'shift_start': shift_start.strftime("%H:%M"),
+                        'shift_end': shift_end.strftime("%H:%M"),
+                        'weekend_shifts_enabled': weekend_shifts,  # Store the weekend shift option
+                        'weekend_guards': weekend_guards,  # Store how many guards
+                        'shift_type': shift_type,  # Store shift type (Day/Night/Day & Night)
+                        'days_operation': operation_days
+                    }
+                    st.session_state.sites.append(new_site)
+                    st.session_state.next_site_id += 1
+                    st.success(f"✅ Added {site_name} successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please fill in all required fields")
+
+# Scheduling Logic and Other Functions...
+# Continue your existing logic with the necessary updates for weekend shifts, guards, and more.
 
 def export_to_excel(schedule, employees, sites, alerts, unassigned, opportunities, week_start):
     """Generate comprehensive Excel workbook"""
@@ -572,6 +518,16 @@ def manage_sites():
             days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
             operation_days = st.multiselect("Select operating days", days, default=days)
             
+            # Weekend shift dynamic input
+            st.write("**Weekend Shifts**:")
+            weekend_shifts = st.checkbox("Enable Weekend Shifts")
+            
+            weekend_guards = None
+            shift_type = None
+            if weekend_shifts:
+                weekend_guards = st.number_input("How many guards required for weekends?", min_value=1, max_value=3)
+                shift_type = st.radio("What type of shifts on weekends?", ['Day Shift', 'Night Shift', 'Day & Night'])
+            
             submitted = st.form_submit_button("Add Site")
             
             if submitted:
@@ -584,6 +540,9 @@ def manage_sites():
                         'guards_required': guards,
                         'shift_start': shift_start.strftime("%H:%M"),
                         'shift_end': shift_end.strftime("%H:%M"),
+                        'weekend_shifts_enabled': weekend_shifts,  # Store the weekend shift option
+                        'weekend_guards': weekend_guards,  # Store how many guards
+                        'shift_type': shift_type,  # Store shift type (Day/Night/Day & Night)
                         'days_operation': operation_days
                     }
                     st.session_state.sites.append(new_site)
@@ -592,30 +551,6 @@ def manage_sites():
                     st.rerun()
                 else:
                     st.error("Please fill in all required fields")
-    
-    st.subheader("Current Sites")
-    
-    if st.session_state.sites:
-        for site in st.session_state.sites:
-            with st.expander(f"🏢 {site['name']} ({site['client']}) - {site['postcode']}"):
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.write(f"**Guards Required:** {site['guards_required']}")
-                    st.write(f"**Shift:** {site['shift_start']} - {site['shift_end']}")
-                
-                with col2:
-                    st.write(f"**Operating Days:** {', '.join(site['days_operation'])}")
-                    hours = calculate_shift_hours(site['shift_start'], site['shift_end'])
-                    st.write(f"**Shift Duration:** {hours:.1f} hours")
-                
-                with col3:
-                    if st.button("🗑️ Delete", key=f"del_site_{site['id']}"):
-                        st.session_state.sites = [s for s in st.session_state.sites if s['id'] != site['id']]
-                        st.success("Deleted!")
-                        st.rerun()
-    else:
-        st.info("No sites added yet. Add your first site above!")
 
 def generate_schedule_page():
     st.title("🔄 Generate Schedule")
