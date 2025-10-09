@@ -138,6 +138,7 @@ def manage_employees():
 def manage_sites():
     st.title("📍 Manage Sites")
     
+    # ADD NEW SITE SECTION
     with st.expander("➕ Add New Site", expanded=False):
         with st.form("add_site"):
             col1, col2 = st.columns(2)
@@ -157,13 +158,13 @@ def manage_sites():
             operation_days = st.multiselect("Select operating days", days, default=days)
             
             # Weekend shift dynamic input
-            st.write("**Weekend Shifts**:")
+            st.write("**Weekend Shifts:**")
             weekend_shifts = st.checkbox("Enable Weekend Shifts")
             
             weekend_guards = None
             shift_type = None
             if weekend_shifts:
-                weekend_guards = st.number_input("How many guards required for weekends?", min_value=1, max_value=3)
+                weekend_guards = st.number_input("How many guards required for weekends?", min_value=1, max_value=3, value=1)
                 shift_type = st.radio("What type of shifts on weekends?", ['Day Shift', 'Night Shift', 'Day & Night'])
             
             submitted = st.form_submit_button("Add Site")
@@ -178,9 +179,9 @@ def manage_sites():
                         'guards_required': guards,
                         'shift_start': shift_start.strftime("%H:%M"),
                         'shift_end': shift_end.strftime("%H:%M"),
-                        'weekend_shifts_enabled': weekend_shifts,  # Store the weekend shift option
-                        'weekend_guards': weekend_guards,  # Store how many guards
-                        'shift_type': shift_type,  # Store shift type (Day/Night/Day & Night)
+                        'weekend_shifts_enabled': weekend_shifts,
+                        'weekend_guards': weekend_guards,
+                        'shift_type': shift_type,
                         'days_operation': operation_days
                     }
                     st.session_state.sites.append(new_site)
@@ -189,7 +190,36 @@ def manage_sites():
                     st.rerun()
                 else:
                     st.error("Please fill in all required fields")
-
+    
+    # DISPLAY EXISTING SITES SECTION (THIS WAS MISSING!)
+    st.subheader("Current Sites")
+    
+    if st.session_state.sites:
+        for site in st.session_state.sites:
+            with st.expander(f"🏢 {site['name']} ({site['client']}) - {site['postcode']}"):
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.write(f"**Guards Required:** {site['guards_required']}")
+                    st.write(f"**Shift:** {site['shift_start']} - {site['shift_end']}")
+                
+                with col2:
+                    st.write(f"**Operating Days:** {', '.join(site['days_operation'])}")
+                    hours = calculate_shift_hours(site['shift_start'], site['shift_end'])
+                    st.write(f"**Shift Duration:** {hours:.1f} hours")
+                    
+                    # Display weekend shift info if enabled
+                    if site.get('weekend_shifts_enabled'):
+                        st.write(f"**Weekend Guards:** {site.get('weekend_guards', 'N/A')}")
+                        st.write(f"**Weekend Shift Type:** {site.get('shift_type', 'N/A')}")
+                
+                with col3:
+                    if st.button("🗑️ Delete", key=f"del_site_{site['id']}"):
+                        st.session_state.sites = [s for s in st.session_state.sites if s['id'] != site['id']]
+                        st.success("Deleted!")
+                        st.rerun()
+    else:
+        st.info("No sites added yet. Add your first site above!")
 # Scheduling Logic and Other Functions...
 # Continue your existing logic with the necessary updates for weekend shifts, guards, and more.
 
